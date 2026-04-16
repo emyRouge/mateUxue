@@ -55,6 +55,24 @@ function fmtExpTerm(A, r) {
   return `${coeffStr}e^{${rStr}}`;
 }
 
+// Build coeff * t^tPow * e^(r*t) term
+function fmtPolyExpTerm(coeff, tPow, r) {
+  if (Math.abs(coeff) < 1e-9) return null;
+  const absC = Math.abs(coeff);
+  const coeffStr = Math.abs(absC - 1) < 1e-9
+    ? (coeff < 0 ? '-' : '')
+    : `${coeff < 0 ? '-' : ''}${fmtNum(absC)}`;
+  const tStr = tPow === 0 ? '' : (tPow === 1 ? 't' : `t^{${tPow}}`);
+  const expStr = Math.abs(r) < 1e-9 ? '' :
+    (Math.abs(Math.abs(r) - 1) < 1e-9
+      ? `e^{${r < 0 ? '-' : ''}t}`
+      : `e^{${fmtNum(r)}t}`);
+  if (!tStr && !expStr) {
+    return coeffStr === '' ? '1' : (coeffStr === '-' ? '-1' : coeffStr);
+  }
+  return `${coeffStr}${tStr}${expStr}`;
+}
+
 // Build trig * exp term: coeff * e^(alpha*t) * trig(omega*t)
 function fmtTrigExpTerm(coeff, alpha, omega, trigFn, withT = false) {
   if (Math.abs(coeff) < 1e-9) return null;
@@ -73,7 +91,9 @@ function fmtTrigExpTerm(coeff, alpha, omega, trigFn, withT = false) {
 // ─── Parser ───────────────────────────────────────────────────────────────────
 
 export function parseODE(raw) {
-  const input = raw.trim().replace(/\s+/g, ' ');
+  // Normalizar: reemplazar x → t (excepto dentro de palabras como "exp")
+  const input = raw.trim().replace(/\s+/g, ' ')
+    .replace(/(?<![a-zA-Z])x(?![a-zA-Z])/g, 't');
   const eqIdx = input.indexOf('=');
   if (eqIdx === -1) throw new Error("La ecuación necesita el signo '='");
 
@@ -143,18 +163,35 @@ function parseForcing(rhs) {
     return { type: 'cos', A: isNaN(A) ? 1 : A, alpha: 0, omega: isNaN(w) ? 1 : w };
   }
 
-  // t
-  if (s === 't') return { type: 'poly1', A: 1, alpha: 0, omega: 0 };
+  // A*t^n  (polinomios: t^2, 3*t^3, t^4, ...)
+  const polyRe = /^(-?[\d.]*)\*?t\^(\d+)$/;
+  const pm = s.match(polyRe);
+  if (pm) {
+    const Ap = pm[1] === '' || pm[1] === '+' ? 1 : (pm[1] === '-' ? -1 : parseFloat(pm[1]));
+    const n  = parseInt(pm[2]);
+    return { type: 'poly_n', A: isNaN(Ap) ? 1 : Ap, n, alpha: 0, omega: 0 };
+  }
+
+  // t  (grado 1)
+  if (s === 't') return { type: 'poly_n', A: 1, n: 1, alpha: 0, omega: 0 };
 
   throw new Error(
     `Función forzante no reconocida: "${rhs}"\n` +
-    `Soportadas: 0, constante, e^(a*t), sin(b*t), cos(b*t), t`
+    `Soportadas: 0, constante, e^(a*t), sin(b*t), cos(b*t), t, t^2, 4*t^3 …`
   );
 }
 
 // ─── LaTeX helpers ─────────────────────────────────────────────────────────
 
-function forcingLatex({ type, A, alpha, omega }) {
+function factorial(n) {
+  if (n <= 1) return 1;
+  let r = 1;
+  for (let i = 2; i <= n; i++) r *= i;
+  return r;
+}
+
+function forcingLatex(f) {
+  const { type, A, alpha, omega } = f;
   const a = fmtNum(A);
   switch (type) {
     case 'zero':     return '0';
@@ -163,6 +200,10 @@ function forcingLatex({ type, A, alpha, omega }) {
     case 'sin':      return `${A !== 1 ? a : ''}\\sin(${fmtNum(omega)}t)`;
     case 'cos':      return `${A !== 1 ? a : ''}\\cos(${fmtNum(omega)}t)`;
     case 'poly1':    return 't';
+    case 'poly_n': {
+      const c = Math.abs(A) === 1 ? '' : fmtNum(Math.abs(A));
+      return `${A < 0 ? '-' : ''}${c}t^{${f.n}}`;
+    }
     default: return '?';
   }
 }
@@ -195,6 +236,18 @@ function laplaceOfForcing({ type, A, alpha, omega }) {
       };
     }
     case 'poly1': return { latex: `\\frac{${fmtNum(A)}}{s^2}`, num: [A], den: [1, 0, 0] };
+    case 'poly_n': {
+      const { n } = forcing;
+      const fact = factorial(n);
+      const coeff = A * fact;
+      const den = new Array(n + 2).fill(0);
+      den[0] = 1; // s^(n+1)
+      return {
+        latex: `\\frac{${fmtNum(coeff)}}{s^{${n + 1}}}`,
+        num: [coeff],
+        den,
+      };
+    }
     default: throw new Error('Tipo de forzante desconocido');
   }
 }
@@ -374,6 +427,32 @@ function syntheticDiv(poly, r) {
   for (let i = 1; i < poly.length - 1; i++)
     out.push(out[out.length - 1] * r + poly[i]);
   return out;
+}
+
+// k-ésima derivada numérica de f en x (diferencias finitas centradas)
+function numDeriv(f, x, k) {
+  // h variable según orden para equilibrar error de truncamiento y redondeo
+  const hs = [0, 1e-5, 1e-4, 4e-4, 2e-3, 5e-3];
+  const h = hs[Math.min(k, hs.length - 1)];
+  if (k === 0) return f(x);
+  if (k === 1) return (f(x + h) - f(x - h)) / (2 * h);
+  if (k === 2) return (f(x + h) - 2 * f(x) + f(x - h)) / (h * h);
+  if (k === 3) return (f(x+2*h) - 2*f(x+h) + 2*f(x-h) - f(x-2*h)) / (2 * h * h * h);
+  if (k === 4) return (f(x+2*h) - 4*f(x+h) + 6*f(x) - 4*f(x-h) + f(x-2*h)) / (h*h*h*h);
+  throw new Error(`Derivada de orden ${k} no soportada (máx. 4)`);
+}
+
+// Residuos para polo real de multiplicidad m en s=p.
+// Retorna [A_m, A_{m-1}, ..., A_1] donde  Y(s) = sum A_j/(s-p)^j + ...
+function residueHighOrder(num, den, p, m) {
+  let d = [...den];
+  for (let i = 0; i < m; i++) d = syntheticDiv(d, p);
+  const R = x => evalPoly(num, x) / evalPoly(d, x);
+  const coeffs = [];
+  for (let k = 0; k < m; k++) {
+    coeffs.push(numDeriv(R, p, k) / factorial(k));
+  }
+  return coeffs; // coeffs[0]=A_m, ..., coeffs[m-1]=A_1
 }
 
 // For repeated complex pole p = α+iω (order 2):
@@ -638,30 +717,43 @@ function invertLaplace(num, den, steps) {
     }
 
     else if (pole.type === 'repeated') {
-      const { A, B } = residueDouble(num, den, pole.re);
+      // Maneja multiplicidad arbitraria m (doble, triple, etc.)
+      const m = pole.mult;
+      const p = pole.re;
+      const coeffs = residueHighOrder(num, den, p, m);
+      // coeffs[k] = A_{m-k},  coeff de 1/(s-p)^{m-k}
+      // L^{-1}{ A_j/(s-p)^j } = A_j * t^{j-1}/(j-1)! * e^{pt}
 
-      const poleStr = Math.abs(pole.re) < 1e-9
-        ? 's'
-        : `s ${pole.re < 0 ? '+' : '-'} ${fmtNum(Math.abs(pole.re))}`;
+      const termParts = [];
+      const evalFns = [];
 
-      // A = coeff of 1/(s-p)   → inverse Laplace: A * e^(pt)
-      // B = coeff of 1/(s-p)^2 → inverse Laplace: B * t * e^(pt)
-      if (Math.abs(A) > 1e-8)
-        pfParts.push(`\\frac{${fmtNum(A)}}{${poleStr}}`);
-      if (Math.abs(B) > 1e-8)
-        pfParts.push(`\\frac{${fmtNum(B)}}{(${poleStr})^2}`);
+      for (let k = 0; k < m; k++) {
+        const Ak = coeffs[k];
+        const j  = m - k;        // orden del polo: 1/(s-p)^j
+        if (Math.abs(Ak) < 1e-8) continue;
 
-      const expPart2 = Math.abs(pole.re) < 1e-9 ? '' :
-        (Math.abs(Math.abs(pole.re) - 1) < 1e-9 ? `e^{${pole.re < 0 ? '-' : ''}t}` : `e^{${fmtNum(pole.re)}t}`);
-      const Bstr = Math.abs(Math.abs(B) - 1) < 1e-9 ? (B < 0 ? '-' : '') : fmtNum(B);
-      const tl = [
-        Math.abs(A) > 1e-8 ? (fmtExpTerm(A, pole.re) || '0') : null,
-        Math.abs(B) > 1e-8 ? `${Bstr}t${expPart2}` : null,
-      ].filter(Boolean).join(' + ');
+        // Fracción parcial
+        const poleStr = Math.abs(p) < 1e-9
+          ? 's'
+          : `s ${p < 0 ? '+' : '-'} ${fmtNum(Math.abs(p))}`;
+        const powerStr = j === 1 ? poleStr : `(${poleStr})^{${j}}`;
+        pfParts.push(`\\frac{${fmtNum(Ak)}}{${powerStr}}`);
+
+        // Término en tiempo: Ak * t^{j-1}/(j-1)! * e^{pt}
+        const tPow = j - 1;
+        const timeCoeff = Ak / factorial(tPow);
+        const ltx = fmtPolyExpTerm(timeCoeff, tPow, p);
+        if (ltx) termParts.push(ltx);
+
+        const C = timeCoeff, TP = tPow, P = p;
+        evalFns.push(t => C * Math.pow(t, TP) * Math.exp(P * t));
+      }
+
+      if (!termParts.length) continue;
 
       terms.push({
-        latex: tl || '0',
-        evaluate: t => A * Math.exp(pole.re * t) + B * t * Math.exp(pole.re * t),
+        latex: termParts.join(' + ').replace(/\+\s*-/g, '- '),
+        evaluate: t => evalFns.reduce((sum, fn) => sum + fn(t), 0),
       });
     }
 

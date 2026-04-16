@@ -71,7 +71,7 @@ export default function InputForm({ onSolve, loading }) {
             className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2.5 font-mono text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           />
           <p className="text-slate-500 text-xs mt-1">
-            Usa y', y'' para derivadas. RHS: 0, constante, e^(a*t), sin(b*t), cos(b*t), t
+            Usa y', y'' para derivadas. RHS: 0, constante, e^(a*t), sin(b*t), cos(b*t), t, t^2, 4*t^3 … (x se mapea a t)
           </p>
         </div>
 

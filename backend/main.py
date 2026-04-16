@@ -43,6 +43,9 @@ def parse_ode(equation_str: str):
     Retorna: (order, a2, a1, a0, f_sym)
       donde a2*y'' + a1*y' + a0*y = f_sym
     """
+    # Normalizar: x → t (excepto dentro de palabras como "exp")
+    equation_str = re.sub(r'(?<![a-zA-Z])x(?![a-zA-Z])', 't', equation_str)
+
     if "=" not in equation_str:
         raise ValueError("La ecuación necesita el signo '='")
 
@@ -112,13 +115,21 @@ def parse_forcing(rhs: str):
         w = 1.0 if m.group(2) in ("", "+") else float(m.group(2))
         return Float(A) * cos(Float(w) * t)
 
-    # t
+    # A*t^n  (polinomios: t^2, 4t^3, 2*t^4, ...)
+    m = re.match(r'^(-?[\d.]*)\*?t\^(\d+)$', r)
+    if m:
+        A_str, n_str = m.group(1), m.group(2)
+        A = (1.0 if A_str in ('', '+') else
+             (-1.0 if A_str == '-' else float(A_str)))
+        return Float(A) * t ** int(n_str)
+
+    # t  (grado 1)
     if r == "t":
         return t
 
     raise ValueError(
         f"Función forzante no reconocida: '{rhs}'. "
-        "Soportadas: 0, constante, e^(a*t), sin(b*t), cos(b*t), t"
+        "Soportadas: 0, constante, e^(a*t), sin(b*t), cos(b*t), t, t^2, 4*t^3 …"
     )
 
 
