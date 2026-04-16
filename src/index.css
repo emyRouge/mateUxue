@@ -1,0 +1,47 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+body {
+  margin: 0;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 100%;
+  min-height: 100svh;
+}
+
+.katex-display {
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+
+.katex {
+  font-size: 1.1em;
+}
+
+.step-block {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 0.75rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  background: #6366f1;
+  color: white;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: bold;
+  margin-right: 0.5rem;
+  flex-shrink: 0;
+}
