@@ -28,22 +28,70 @@ const TRANSFORM_TABLE = [
   ["\\mathcal{L}\\{y''\\}", 's^2Y(s)-sy_0-y_1'],
 ];
 
+const BACKEND_URL = 'http://localhost:8000';
+
 export default function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastInput, setLastInput] = useState({ equation: '', y0: 0, dy0: 0 });
+  const [engine, setEngine] = useState('');
 
-  function handleSolve(equation, y0, dy0) {
+  async function handleSolve(equation, y0, dy0) {
     setLoading(true);
     setError('');
     setResult(null);
+    setEngine('');
 
+    // ── Intentar backend Python (sympy) ──────────────────────────────────────
+    try {
+      const resp = await fetch(`${BACKEND_URL}/solve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ equation, y0, dy0 }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.detail || 'Error del servidor Python');
+      }
+
+      const data = await resp.json();
+
+      // Construir función evaluate desde la expresión JS devuelta por Python
+      let evaluate;
+      try {
+        // eslint-disable-next-line no-new-func
+        const fn = new Function('t', `return ${data.solution_expr}`);
+        fn(1); // prueba rápida
+        evaluate = fn;
+      } catch {
+        evaluate = () => null;
+      }
+
+      setResult({
+        steps: data.steps,
+        solution: { latex: data.solution_latex, evaluate, terms: [] },
+        parsed: { order: data.order },
+      });
+      setLastInput({ equation, y0, dy0 });
+      setEngine('python');
+      setLoading(false);
+      return;
+
+    } catch (pythonErr) {
+      // Backend Python no disponible → fallback al motor JS
+      console.warn('Backend Python no disponible, usando motor JS:', pythonErr.message);
+    }
+
+    // ── Fallback: motor JS ────────────────────────────────────────────────────
     setTimeout(() => {
       try {
         const res = solveODE(equation, y0, dy0);
         setResult(res);
         setLastInput({ equation, y0, dy0 });
+        setEngine('js');
       } catch (e) {
         setError(e.message || 'Error desconocido al resolver la ecuación.');
       } finally {
@@ -120,16 +168,29 @@ export default function App() {
               <div className="h-64 flex flex-col items-center justify-center text-slate-400 border border-slate-700/40 rounded-2xl bg-slate-800/20">
                 <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3" />
                 <p className="text-sm">Aplicando Transformada de Laplace…</p>
+                <p className="text-xs text-slate-600 mt-1">Conectando con backend Python (sympy)…</p>
               </div>
             )}
 
             {result && !loading && (
-              <ResultsPanel
-                result={result}
-                equation={lastInput.equation}
-                y0={lastInput.y0}
-                dy0={lastInput.dy0}
-              />
+              <>
+                {engine && (
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium mb-4 w-fit ${
+                    engine === 'python'
+                      ? 'bg-emerald-900/30 border border-emerald-700/50 text-emerald-300'
+                      : 'bg-slate-700/40 border border-slate-600/50 text-slate-400'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${engine === 'python' ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                    {engine === 'python' ? 'Resuelto con Python (sympy)' : 'Resuelto con motor JS (fallback)'}
+                  </div>
+                )}
+                <ResultsPanel
+                  result={result}
+                  equation={lastInput.equation}
+                  y0={lastInput.y0}
+                  dy0={lastInput.dy0}
+                />
+              </>
             )}
           </div>
         </div>

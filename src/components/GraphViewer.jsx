@@ -5,13 +5,14 @@ import {
   LineElement,
   PointElement,
   LinearScale,
+  CategoryScale,
   Title,
   Tooltip,
   Legend,
   Filler,
 } from 'chart.js';
 
-Chart.register(LineController, LineElement, PointElement, LinearScale, Title, Tooltip, Legend, Filler);
+Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Title, Tooltip, Legend, Filler);
 
 export default function GraphViewer({ evaluate, solutionLatex }) {
   const canvasRef = useRef(null);
